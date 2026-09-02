@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from fastapi import FastAPI
 
 app = FastAPI(
@@ -19,3 +21,25 @@ def health():
     return {
         "Status": "Healthy"
     }
+@app.get("/precheck")
+def get_precheck():
+
+    report_file = Path(
+        "reports/SQL01_PreCheck.json"
+    )
+
+    if not report_file.exists():
+
+        return {
+            "Error": "PreCheck report not found"
+        }
+
+    with open(
+        report_file,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
+        data = json.load(file)
+
+    return data
