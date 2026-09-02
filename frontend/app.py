@@ -1,7 +1,6 @@
 import requests
 import streamlit as st
 
-
 # --------------------------------------------------
 # Page Configuration
 # --------------------------------------------------
@@ -13,36 +12,54 @@ st.set_page_config(
 )
 
 # --------------------------------------------------
-# Title
+# Header
 # --------------------------------------------------
 
-st.title("SQL AI Agent")
+st.title("🖥️ SQL AI Agent")
 
 st.markdown(
-    "SQL Server Build Readiness Assessment"
+    """
+AI Powered SQL Server Build Assistant
+
+Current Workflow:
+
+Build Request → PreCheck → Build Plan → Installation → Validation
+"""
 )
+
+st.divider()
 
 # --------------------------------------------------
 # Input Section
 # --------------------------------------------------
 
-server_name = st.text_input(
-    "Server Name",
-    value="SQL01"
-)
+left, right = st.columns([3, 1])
 
-run_button = st.button(
-    "Run PreCheck"
-)
+with left:
+
+    server_name = st.text_input(
+        "Server Name",
+        value="SQL01"
+    )
+
+with right:
+
+    st.write("")
+    st.write("")
+
+    run_button = st.button(
+        "Run PreCheck",
+        use_container_width=True
+    )
 
 # --------------------------------------------------
-# Execute PreCheck
+# Run PreCheck
 # --------------------------------------------------
 
 if run_button:
 
     with st.spinner(
-        f"Running PreCheck against {server_name}..."
+        f"Running PreCheck against {server_name}"
     ):
 
         try:
@@ -54,6 +71,10 @@ if run_button:
                 },
                 timeout=120
             )
+
+            # ----------------------------------
+            # Error Handling
+            # ----------------------------------
 
             if response.status_code != 200:
 
@@ -69,127 +90,164 @@ if run_button:
 
                 result = response.json()
 
-                report = result[
-                    "PreCheckReport"
-                ]
-
-                st.success(
-                    "PreCheck completed successfully."
-                )
+                report = result["PreCheckReport"]
 
                 # ----------------------------------
-                # Summary Information
+                # Status Banner
                 # ----------------------------------
 
-                col1, col2, col3 = st.columns(3)
+                if report["ReadyForBuild"]:
 
-                with col1:
+                    st.success(
+                        "✅ SERVER READY FOR BUILD"
+                    )
+
+                else:
+
+                    st.warning(
+                        "⚠️ SERVER NOT READY FOR BUILD"
+                    )
+
+                # ----------------------------------
+                # Summary Cards
+                # ----------------------------------
+
+                card1, card2, card3, card4 = st.columns(4)
+
+                with card1:
+
                     st.metric(
                         "Server",
                         report["Hostname"]
                     )
 
-                with col2:
+                with card2:
+
                     st.metric(
                         "Domain",
                         report["Domain"]
                     )
 
-                with col3:
+                with card3:
+
                     st.metric(
-                        "Ready For Build",
-                        str(
-                            report["ReadyForBuild"]
-                        )
+                        "Memory (GB)",
+                        report["MemoryGB"]
+                    )
+
+                with card4:
+
+                    st.metric(
+                        "CPU",
+                        report["LogicalCPUCount"]
                     )
 
                 st.divider()
 
                 # ----------------------------------
-                # Infrastructure Details
+                # Infrastructure Section
                 # ----------------------------------
 
                 st.subheader(
-                    "Infrastructure"
+                    "Infrastructure Details"
                 )
 
-                st.write(
-                    f"Operating System: "
-                    f"{report['OperatingSystem']}"
-                )
+                col1, col2 = st.columns(2)
 
-                st.write(
-                    f"Logical CPU Count: "
-                    f"{report['LogicalCPUCount']}"
-                )
+                with col1:
 
-                st.write(
-                    f"Memory (GB): "
-                    f"{report['MemoryGB']}"
-                )
+                    st.write(
+                        f"Operating System: {report['OperatingSystem']}"
+                    )
 
-                st.write(
-                    f"C Drive Free (GB): "
-                    f"{report['CDriveFreeGB']}"
-                )
+                    st.write(
+                        f"C Drive Free: {report['CDriveFreeGB']} GB"
+                    )
 
-                st.write(
-                    f"C Drive Size (GB): "
-                    f"{report['CDriveSizeGB']}"
-                )
+                with col2:
+
+                    st.write(
+                        f"C Drive Size: {report['CDriveSizeGB']} GB"
+                    )
+
+                    st.write(
+                        f"Pending Reboot: {report['PendingReboot']}"
+                    )
 
                 st.divider()
 
                 # ----------------------------------
-                # Checks
+                # Check Results
                 # ----------------------------------
 
                 st.subheader(
-                    "Checks"
+                    "Build Readiness Checks"
                 )
 
                 for check in report["Checks"]:
 
-                    status = check["Status"]
-
-                    if status == "PASS":
+                    if check["Status"] == "PASS":
 
                         st.success(
-                            f"{check['CheckName']} "
-                            f"→ PASS"
+                            f"{check['CheckName']} | "
+                            f"Expected: {check['Expected']} | "
+                            f"Actual: {check['Actual']}"
                         )
 
                     else:
 
                         st.error(
-                            f"{check['CheckName']} "
-                            f"→ FAIL"
+                            f"{check['CheckName']} | "
+                            f"Expected: {check['Expected']} | "
+                            f"Actual: {check['Actual']}"
                         )
 
                 st.divider()
 
                 # ----------------------------------
-                # Summary
+                # Summary Dashboard
                 # ----------------------------------
 
                 st.subheader(
                     "Summary"
                 )
 
-                st.json(
-                    report["Summary"]
-                )
+                s1, s2, s3 = st.columns(3)
+
+                with s1:
+
+                    st.metric(
+                        "Total Checks",
+                        report["Summary"]["TotalChecks"]
+                    )
+
+                with s2:
+
+                    st.metric(
+                        "Passed",
+                        report["Summary"]["PassedChecks"]
+                    )
+
+                with s3:
+
+                    st.metric(
+                        "Failed",
+                        report["Summary"]["FailedChecks"]
+                    )
 
                 st.divider()
 
                 # ----------------------------------
-                # Full JSON
+                # Full JSON Report
                 # ----------------------------------
 
                 with st.expander(
-                    "View Full Report"
+                    "View Full JSON Report"
                 ):
-                    st.json(report)
+
+                    st.json(
+                        report
+                    )
 
         except Exception as ex:
 
