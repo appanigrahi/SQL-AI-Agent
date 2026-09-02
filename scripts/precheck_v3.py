@@ -57,6 +57,9 @@ if result.stderr:
 else:
 
     data = json.loads(result.stdout)
+    data.pop("PSComputerName", None)
+    data.pop("RunspaceId", None)
+    data.pop("PSShowComputerName", None)
 
     data["MemoryGB"] = round(
         data["TotalMemoryBytes"] / (1024 * 1024 * 1024),
