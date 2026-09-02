@@ -1,27 +1,19 @@
 import requests
 import streamlit as st
 
-# --------------------------------------------------
-# Page Configuration
-# --------------------------------------------------
-
 st.set_page_config(
     page_title="SQL AI Agent",
     page_icon="🖥️",
     layout="wide"
 )
 
-# --------------------------------------------------
-# Header
-# --------------------------------------------------
-
 st.title("🖥️ SQL AI Agent")
 
 st.markdown(
     """
-AI Powered SQL Server Build Assistant
+### SQL Server Build Automation Portal
 
-Current Workflow:
+Workflow:
 
 Build Request → PreCheck → Build Plan → Installation → Validation
 """
@@ -30,27 +22,72 @@ Build Request → PreCheck → Build Plan → Installation → Validation
 st.divider()
 
 # --------------------------------------------------
-# Input Section
+# Build Request Section
 # --------------------------------------------------
 
-left, right = st.columns([3, 1])
+st.subheader("Build Request")
 
-with left:
+col1, col2 = st.columns(2)
+
+with col1:
 
     server_name = st.text_input(
-        "Server Name",
+        "Target Server",
         value="SQL01"
     )
 
-with right:
-
-    st.write("")
-    st.write("")
-
-    run_button = st.button(
-        "Run PreCheck",
-        use_container_width=True
+    sql_version = st.selectbox(
+        "SQL Version",
+        [
+            "SQL Server 2019",
+            "SQL Server 2022"
+        ]
     )
+
+with col2:
+
+    edition = st.selectbox(
+        "Edition",
+        [
+            "Enterprise",
+            "Standard",
+            "Developer"
+        ]
+    )
+
+    instance_name = st.text_input(
+        "Instance Name",
+        value="MSSQLSERVER"
+    )
+
+run_button = st.button(
+    "Run PreCheck",
+    use_container_width=True
+)
+
+st.divider()
+
+# --------------------------------------------------
+# Build Request Summary
+# --------------------------------------------------
+
+st.subheader("Requested Build Configuration")
+
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+    st.info(server_name)
+
+with c2:
+    st.info(sql_version)
+
+with c3:
+    st.info(edition)
+
+with c4:
+    st.info(instance_name)
+
+st.divider()
 
 # --------------------------------------------------
 # Run PreCheck
@@ -72,29 +109,19 @@ if run_button:
                 timeout=120
             )
 
-            # ----------------------------------
-            # Error Handling
-            # ----------------------------------
-
             if response.status_code != 200:
 
                 st.error(
                     f"API Error: {response.status_code}"
                 )
 
-                st.json(
-                    response.json()
-                )
+                st.json(response.json())
 
             else:
 
                 result = response.json()
 
                 report = result["PreCheckReport"]
-
-                # ----------------------------------
-                # Status Banner
-                # ----------------------------------
 
                 if report["ReadyForBuild"]:
 
@@ -108,77 +135,33 @@ if run_button:
                         "⚠️ SERVER NOT READY FOR BUILD"
                     )
 
-                # ----------------------------------
-                # Summary Cards
-                # ----------------------------------
+                c1, c2, c3, c4 = st.columns(4)
 
-                card1, card2, card3, card4 = st.columns(4)
-
-                with card1:
-
+                with c1:
                     st.metric(
                         "Server",
                         report["Hostname"]
                     )
 
-                with card2:
-
+                with c2:
                     st.metric(
                         "Domain",
                         report["Domain"]
                     )
 
-                with card3:
-
+                with c3:
                     st.metric(
                         "Memory (GB)",
                         report["MemoryGB"]
                     )
 
-                with card4:
-
+                with c4:
                     st.metric(
                         "CPU",
                         report["LogicalCPUCount"]
                     )
 
                 st.divider()
-
-                # ----------------------------------
-                # Infrastructure Section
-                # ----------------------------------
-
-                st.subheader(
-                    "Infrastructure Details"
-                )
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-
-                    st.write(
-                        f"Operating System: {report['OperatingSystem']}"
-                    )
-
-                    st.write(
-                        f"C Drive Free: {report['CDriveFreeGB']} GB"
-                    )
-
-                with col2:
-
-                    st.write(
-                        f"C Drive Size: {report['CDriveSizeGB']} GB"
-                    )
-
-                    st.write(
-                        f"Pending Reboot: {report['PendingReboot']}"
-                    )
-
-                st.divider()
-
-                # ----------------------------------
-                # Check Results
-                # ----------------------------------
 
                 st.subheader(
                     "Build Readiness Checks"
@@ -190,23 +173,17 @@ if run_button:
 
                         st.success(
                             f"{check['CheckName']} | "
-                            f"Expected: {check['Expected']} | "
-                            f"Actual: {check['Actual']}"
+                            f"{check['Actual']}"
                         )
 
                     else:
 
                         st.error(
                             f"{check['CheckName']} | "
-                            f"Expected: {check['Expected']} | "
-                            f"Actual: {check['Actual']}"
+                            f"{check['Actual']}"
                         )
 
                 st.divider()
-
-                # ----------------------------------
-                # Summary Dashboard
-                # ----------------------------------
 
                 st.subheader(
                     "Summary"
@@ -215,42 +192,28 @@ if run_button:
                 s1, s2, s3 = st.columns(3)
 
                 with s1:
-
                     st.metric(
                         "Total Checks",
                         report["Summary"]["TotalChecks"]
                     )
 
                 with s2:
-
                     st.metric(
                         "Passed",
                         report["Summary"]["PassedChecks"]
                     )
 
                 with s3:
-
                     st.metric(
                         "Failed",
                         report["Summary"]["FailedChecks"]
                     )
 
-                st.divider()
-
-                # ----------------------------------
-                # Full JSON Report
-                # ----------------------------------
-
                 with st.expander(
-                    "View Full JSON Report"
+                    "Full JSON Report"
                 ):
-
-                    st.json(
-                        report
-                    )
+                    st.json(report)
 
         except Exception as ex:
 
-            st.error(
-                str(ex)
-            )
+            st.error(str(ex))
