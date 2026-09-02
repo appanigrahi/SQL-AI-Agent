@@ -1,3 +1,4 @@
+import subprocess
 import json
 from pathlib import Path
 from fastapi import FastAPI
@@ -23,6 +24,12 @@ def health():
     }
 @app.get("/precheck")
 def get_precheck():
+
+    result = subprocess.run(
+        ["python", "scripts/precheck_v5.py"],
+        capture_output=True,
+        text=True
+    )
 
     report_file = Path(
         "reports/SQL01_PreCheck.json"
