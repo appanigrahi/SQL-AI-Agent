@@ -23,7 +23,10 @@ def health():
         "Status": "Healthy"
     }
 @app.get("/precheck")
-def get_precheck():
+def get_precheck(server: str = "SQL01"):
+    return{
+        "SelectedServer": server
+        }
 
     result = subprocess.run(
         ["python", "scripts/precheck_v5.py"],

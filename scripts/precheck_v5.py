@@ -1,168 +1,329 @@
+import sys
 import subprocess
 import json
 import os
+import re
 from datetime import datetime
 
+
+# --------------------------------------------------
+# 1. Read and validate the target server name
+# --------------------------------------------------
+
+DEFAULT_SERVER = "SQL01"
+
+if len(sys.argv) > 1:
+    server_name = sys.argv[1].strip()
+else:
+    server_name = DEFAULT_SERVER
+
+# Allow only valid Windows hostname characters.
+# This prevents arbitrary PowerShell content from being supplied.
+if not re.fullmatch(r"[A-Za-z0-9.-]{1,255}", server_name):
+    print("ERROR:")
+    print(
+        "Invalid server name. Use only letters, numbers, "
+        "periods, and hyphens."
+    )
+    sys.exit(1)
+
+
+# --------------------------------------------------
+# 2. PowerShell remote discovery script
+# --------------------------------------------------
+
 ps_command = r'''
-Invoke-Command -ComputerName SQL01 -HideComputerName -ScriptBlock {
+$ErrorActionPreference = "Stop"
 
-    $os = Get-CimInstance Win32_OperatingSystem
+Invoke-Command `
+    -ComputerName "__SERVER_NAME__" `
+    -HideComputerName `
+    -ScriptBlock {
 
-    $cs = Get-CimInstance Win32_ComputerSystem
+        $os = Get-CimInstance Win32_OperatingSystem
 
-    $disk = Get-CimInstance Win32_LogicalDisk `
-        -Filter "DeviceID='C:'"
+        $cs = Get-CimInstance Win32_ComputerSystem
 
-    $sqlInstalled = (
-        Get-Service MSSQLSERVER `
-        -ErrorAction SilentlyContinue
-    ) -ne $null
+        $disk = Get-CimInstance Win32_LogicalDisk `
+            -Filter "DeviceID='C:'"
 
-    $pendingReboot = Test-Path `
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+        $sqlInstalled = (
+            Get-Service `
+                -Name MSSQLSERVER `
+                -ErrorAction SilentlyContinue
+        ) -ne $null
 
-    [PSCustomObject]@{
+        $pendingReboot = Test-Path `
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
 
-        Hostname = $env:COMPUTERNAME
-
-        Domain = $cs.Domain
-
-        OperatingSystem = $os.Caption
-
-        TotalMemoryBytes = $cs.TotalPhysicalMemory
-
-        LogicalCPUCount = $cs.NumberOfLogicalProcessors
-
-        CDriveFreeBytes = $disk.FreeSpace
-
-        CDriveSizeBytes = $disk.Size
-
-        SQLInstalled = $sqlInstalled
-
-        PendingReboot = $pendingReboot
-    }
-
-} | ConvertTo-Json
+        [PSCustomObject]@{
+            Hostname             = $env:COMPUTERNAME
+            Domain               = $cs.Domain
+            OperatingSystem      = $os.Caption
+            TotalMemoryBytes     = [Int64]$cs.TotalPhysicalMemory
+            LogicalCPUCount      = [Int32]$cs.NumberOfLogicalProcessors
+            CDriveFreeBytes      = [Int64]$disk.FreeSpace
+            CDriveSizeBytes      = [Int64]$disk.Size
+            SQLInstalled         = [Boolean]$sqlInstalled
+            PendingReboot        = [Boolean]$pendingReboot
+        }
+    } |
+    ConvertTo-Json -Depth 5
 '''
 
-result = subprocess.run(
-    ["powershell", "-Command", ps_command],
-    capture_output=True,
-    text=True
+# Replace the explicit placeholder with the validated server name.
+ps_command = ps_command.replace(
+    "__SERVER_NAME__",
+    server_name
 )
 
-if result.stderr:
 
+# --------------------------------------------------
+# 3. Execute PowerShell
+# --------------------------------------------------
+
+print(f"\nChecking Server: {server_name}\n")
+
+result = subprocess.run(
+    [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        ps_command
+    ],
+    capture_output=True,
+    text=True,
+    encoding="utf-8",
+    errors="replace"
+)
+
+
+# --------------------------------------------------
+# 4. Handle PowerShell execution errors
+# --------------------------------------------------
+
+if result.returncode != 0:
     print("ERROR:")
-    print(result.stderr)
+    print(f"PreCheck failed for server: {server_name}")
 
-else:
+    if result.stderr.strip():
+        print(result.stderr.strip())
+    elif result.stdout.strip():
+        print(result.stdout.strip())
+    else:
+        print("PowerShell returned no error details.")
 
+    sys.exit(result.returncode)
+
+
+if not result.stdout.strip():
+    print("ERROR:")
+    print(
+        f"PowerShell returned no JSON output for "
+        f"server: {server_name}"
+    )
+    sys.exit(1)
+
+
+# --------------------------------------------------
+# 5. Convert PowerShell JSON into a Python dictionary
+# --------------------------------------------------
+
+try:
     data = json.loads(result.stdout)
 
-    # Remove PowerShell metadata
-    data.pop("PSComputerName", None)
-    data.pop("RunspaceId", None)
-    data.pop("PSShowComputerName", None)
+except json.JSONDecodeError as error:
+    print("ERROR:")
+    print("PowerShell output could not be parsed as JSON.")
+    print(f"JSON parsing details: {error}")
 
-    # Convert values
-    data["MemoryGB"] = round(
-        data["TotalMemoryBytes"] / (1024 * 1024 * 1024),
-        2
-    )
+    print("\nRaw PowerShell output:")
+    print(result.stdout)
 
-    data["CDriveFreeGB"] = round(
-        data["CDriveFreeBytes"] / (1024 * 1024 * 1024),
-        2
-    )
+    if result.stderr.strip():
+        print("\nPowerShell error output:")
+        print(result.stderr)
 
-    data["CDriveSizeGB"] = round(
-        data["CDriveSizeBytes"] / (1024 * 1024 * 1024),
-        2
-    )
+    sys.exit(1)
 
-    # Build Readiness Logic
-    data["ReadyForBuild"] = (
-        data["MemoryGB"] >= 8
-        and
-        data["CDriveFreeGB"] >= 20
-        and
-        not data["SQLInstalled"]
-        and
-        not data["PendingReboot"]
-    )
-    checks = [
 
+# --------------------------------------------------
+# 6. Remove PowerShell remoting metadata
+# --------------------------------------------------
+
+data.pop("PSComputerName", None)
+data.pop("RunspaceId", None)
+data.pop("PSShowComputerName", None)
+
+
+# --------------------------------------------------
+# 7. Convert byte values into readable GB values
+# --------------------------------------------------
+
+data["MemoryGB"] = round(
+    data["TotalMemoryBytes"] / (1024 ** 3),
+    2
+)
+
+data["CDriveFreeGB"] = round(
+    data["CDriveFreeBytes"] / (1024 ** 3),
+    2
+)
+
+data["CDriveSizeGB"] = round(
+    data["CDriveSizeBytes"] / (1024 ** 3),
+    2
+)
+
+
+# --------------------------------------------------
+# 8. Evaluate individual readiness checks
+# --------------------------------------------------
+
+checks = [
     {
         "CheckName": "Memory Check",
         "Expected": ">= 8 GB",
         "Actual": f"{data['MemoryGB']} GB",
-        "Status": "PASS" if data["MemoryGB"] >= 8 else "FAIL"
+        "Status": (
+            "PASS"
+            if data["MemoryGB"] >= 8
+            else "FAIL"
+        )
     },
-
     {
         "CheckName": "Disk Check",
         "Expected": ">= 20 GB",
         "Actual": f"{data['CDriveFreeGB']} GB",
-        "Status": "PASS" if data["CDriveFreeGB"] >= 20 else "FAIL"
+        "Status": (
+            "PASS"
+            if data["CDriveFreeGB"] >= 20
+            else "FAIL"
+        )
     },
-
     {
         "CheckName": "SQL Installation Check",
         "Expected": "Not Installed",
-        "Actual": "Installed" if data["SQLInstalled"] else "Not Installed",
-        "Status": "PASS" if not data["SQLInstalled"] else "FAIL"
+        "Actual": (
+            "Installed"
+            if data["SQLInstalled"]
+            else "Not Installed"
+        ),
+        "Status": (
+            "PASS"
+            if not data["SQLInstalled"]
+            else "FAIL"
+        )
     },
-
     {
         "CheckName": "Pending Reboot Check",
         "Expected": "No Reboot Pending",
-        "Actual": "Reboot Pending" if data["PendingReboot"] else "No Reboot Pending",
-        "Status": "PASS" if not data["PendingReboot"] else "FAIL"
+        "Actual": (
+            "Reboot Pending"
+            if data["PendingReboot"]
+            else "No Reboot Pending"
+        ),
+        "Status": (
+            "PASS"
+            if not data["PendingReboot"]
+            else "FAIL"
+        )
     }
+]
+
+data["Checks"] = checks
+
+
+# --------------------------------------------------
+# 9. Generate summary and final readiness result
+# --------------------------------------------------
+
+passed_checks = len(
+    [
+        check
+        for check in checks
+        if check["Status"] == "PASS"
     ]
-    data["Checks"] = checks
-    passed_checks = len(
-        [c for c in checks if c["Status"] == "PASS"]
-        )
-    failed_checks = len(
-        [c for c in checks if c["Status"] == "FAIL"]
-        )
-    data["Summary"] = {
-        "TotalChecks": len(checks),
-        "PassedChecks": passed_checks,
-        "FailedChecks": failed_checks
-        }
-    # Remove low-level byte values from the final report
-    data.pop("TotalMemoryBytes", None)
-    data.pop("CDriveFreeBytes", None)
-    data.pop("CDriveSizeBytes", None)
-    # Timestamp
-    data["ExecutionTime"] = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
+)
+
+failed_checks = len(
+    [
+        check
+        for check in checks
+        if check["Status"] == "FAIL"
+    ]
+)
+
+data["Summary"] = {
+    "TotalChecks": len(checks),
+    "PassedChecks": passed_checks,
+    "FailedChecks": failed_checks
+}
+
+# The server is ready only when every check passes.
+data["ReadyForBuild"] = failed_checks == 0
+
+
+# --------------------------------------------------
+# 10. Remove low-level byte values
+# --------------------------------------------------
+
+data.pop("TotalMemoryBytes", None)
+data.pop("CDriveFreeBytes", None)
+data.pop("CDriveSizeBytes", None)
+
+
+# --------------------------------------------------
+# 11. Add execution metadata
+# --------------------------------------------------
+
+data["RequestedServer"] = server_name
+
+data["ExecutionTime"] = datetime.now().strftime(
+    "%Y-%m-%d %H:%M:%S"
+)
+
+
+# --------------------------------------------------
+# 12. Display the report
+# --------------------------------------------------
+
+print("=== PRECHECK V5 REPORT ===\n")
+
+print(
+    json.dumps(
+        data,
+        indent=4
+    )
+)
+
+
+# --------------------------------------------------
+# 13. Save the JSON report
+# --------------------------------------------------
+
+os.makedirs(
+    "reports",
+    exist_ok=True
+)
+
+# Use the actual remote hostname returned by SQL01.
+report_file = os.path.join(
+    "reports",
+    f"{data['Hostname']}_PreCheck.json"
+)
+
+with open(
+    report_file,
+    "w",
+    encoding="utf-8"
+) as file:
+    json.dump(
+        data,
+        file,
+        indent=4
     )
 
-    print("\n=== PRECHECK V5 REPORT ===\n")
-
-    print(json.dumps(data, indent=4))
-
-    # Create reports folder
-    os.makedirs("reports", exist_ok=True)
-
-    # Save report
-    report_file = f"reports\\{data['Hostname']}_PreCheck.json"
-
-    with open(
-        report_file,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            data,
-            file,
-            indent=4
-        )
-
-    print("\nReport Saved:")
-    print(report_file)
+print("\nReport Saved:")
+print(report_file)
